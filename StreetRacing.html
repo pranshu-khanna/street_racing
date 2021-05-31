@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<title> Street Racing </title>
+	<link href="StreetRacing.css" rel="stylesheet" type="text/css" />
+</head>
+
+<body>
+	<div class="speedTextDiv">
+		<input type="text" id="speed" disabled=true>
+	</div>
+	<div class="timeLeftDiv">
+		<input type="text" id="timeLeft" disabled=true>
+	</div>
+	<div class="fuelLeftDiv">
+		<input type="text" id="fuelLeft" disabled=true>
+	</div>
+
+	<div class="speedometer"></div>
+	<div class="timer"></div>
+	<div class="fuelTank"></div>
+	<div class="progressBar"></div>
+	<div class="boxCar" id="boxCar"></div>
+	<div class="finishLine"></div>
+
+
+	<script type="text/javascript">
+		// class to create street
+		class Street {
+			constructor(height, width) {
+				var road = document.createElement("div");
+				document.body.appendChild(road);
+				road.classList.add("street");
+				road.style.width = width + "px";
+				road.style.height = height + "px";
+			}
+		}
+
+		// generic vehicle class
+		class Vehicle {
+			constructor(height, width, xpos, ypos, carType, carUrlImg, speed = 0) {
+				var car = document.createElement("img");
+				car.classList.add("car");
+				car.style.left = xpos + "px";
+				car.style.top = ypos + "px";
+				car.src = carUrlImg;
+				car.style.width = width + "px";
+				car.style.height = height + "px";
+				car.classList.add(carType);
+
+				document.body.appendChild(car);
+
+				this.car = car;
+				this.carType = carType;
+				this.fuelCapacity = 1000; // fuel tank capacity
+				this.fuelLeft = this.fuelCapacity;
+				this.maxSpeed = 400; // meter per seconds
+				this.mileage = 30; // meter per liter
+				this.tripmeter = 0;
+			}
+
+			move(dx, dy) {
+				var xpos = this.car.offsetLeft;
+				var ypos = this.car.offsetTop;
+				xpos = xpos + dx;
+				ypos = ypos + dy;
+
+				this.car.style.left = xpos + "px";
+				this.car.style.top = ypos + "px";
+			}
+
+			getCarInfo() {
+				var xpos = parseInt(this.car.offsetLeft, 10);
+				var ypos = parseInt(this.car.offsetTop, 10);
+				var width = parseInt(this.car.style.width, 10);
+				var height = parseInt(this.car.style.height, 10);
+				return [xpos, ypos, width, height];
+			}
+
+			removeCar() {
+				this.car.remove();
+			}
+
+			validSpeed(potential_new_speed) {
+				if (potential_new_speed >= this.maxSpeed) {
+					return this.maxSpeed;
+				} else if (potential_new_speed < 0) {
+					return 0;
+				} else {
+					return potential_new_speed;
+				}
+
+			}
+
+			refuelCar() {
+				this.fuelLeft = this.fuelCapacity;
+				this.tripmeter = controller.calculateTotalDistanceTraveled();
+			}
+
+			vehicleFuelLeft() {
+				// change display of fuel as game progresses
+				this.fuelLeft = this.fuelCapacity - ((controller.calculateTotalDistanceTraveled() - this.tripmeter) / this.mileage);
+				return this.fuelLeft;
+			}
+		}
+
+		// particle class and system to move dotted line
+		class Particle {
+			constructor(lineX, lineY) {
+				// constructor values for dotted line
+				this.dottedLine = document.createElement("div");
+				document.body.appendChild(this.dottedLine);
+				this.dottedLine.style.left = lineX + "px";
+				this.dottedLine.style.top = lineY + "px";
+				this.dottedLine.style.backgroundColor = "white";
+				this.dottedLine.classList.add("dottedLine");
+
+				// constructor values for trees on left of screen
+				this.treeLeft = document.createElement("div");
+				document.body.appendChild(this.treeLeft);
+				this.treeLeft.classList.add("treeLeft");
+
+				// constructor values for trees on right of screen
+				this.treeRight = document.createElement("div");
+				document.body.appendChild(this.treeRight);
+				this.treeRight.classList.add("treeRight");
+			}
+		};
+
+		class ParticleSystem {
+			constructor(topY, bottomY) {
+				this.top = topY;
+				this.bottom = bottomY;
+				this.left = 560;
+				this.right = 1120;
+				this.ctr = 0;
+			}
+			addParticle() {
+				var xPosition = screen.width / 2;
+				var yPosition = this.top;
+				(new Particle(xPosition, yPosition));
+			}
+
+			destroyParticle(particleObj) {
+				particleObj.remove();
+			}
+
+			handleParticle(particle) {
+				var y = particle.offsetTop;
+				if (y >= particleSys.bottom) {
+					particleSys.destroyParticle(particle);
+				} else {
+					particle.style.top = (y + (controller.changePerceivedMotion()[0])) + "px";
+				}
+			}
+
+			runParticleSys() {
+				// move
+				this.ctr += 1;
+				document.querySelectorAll(".dottedLine").forEach((p) => { particleSys.handleParticle(p); });
+				document.querySelectorAll(".treeLeft").forEach((p) => { particleSys.handleParticle(p); });
+				document.querySelectorAll(".treeRight").forEach((p) => { particleSys.handleParticle(p); });
+				// add new
+				if (this.ctr % (controller.changePerceivedMotion()[1]) == 0 && controller.speed > 0) {
+					particleSys.addParticle();
+				}
+
+			}
+		}
+
+		var particleSys = new ParticleSystem(20, 900);
+		var clock = setInterval(() => { particleSys.runParticleSys(); }, 100);
+
+		// ultimate game controller
+		class gameController {
+			constructor() {
+				// member vars that will be used later
+				this.car_list = {};
+				this.state = "not-pressing";
+				this.keyCtr = 0;
+				this.fuelDecrementCtr = 1;
+				this.controllerCounter = 0;
+				this.incrementMultiplier = 1;
+
+				this.speed = 0; // meters per second
+				this.lives = 3;
+				this.race_distance = 25000; // in meters
+				this.distanceTraveledAtPriorSpeeds = 0;
+				this.distanceTraveledAtPresentSpeed = 0;
+
+				this.gameStartTime = new Date().getTime();
+				this.gameDuration = 2 * 60 * 1000; // in milliseconds
+
+				this.lastTimeWhenSpeedChanged = null;
+
+				this.percentageFactor = null;
+				this.scaleFactor = 24;
+
+				// making player and obstacle car
+				this.car_list["playerCar"] = new Vehicle(120, 90, 780, 680, "playerCar", "racing_assets/RoadFighterCar.png");
+				this.screenHeight = Math.min(screen.height, 920);
+				new Street(this.screenHeight, (screen.width / 3));
+
+				this.displayLife();
+			}
+
+			detectCollision() {
+				// collision detection
+				var px = this.car_list["playerCar"].getCarInfo()[0];
+				var py = this.car_list["playerCar"].getCarInfo()[1];
+				var pw = this.car_list["playerCar"].getCarInfo()[2];
+				var ph = this.car_list["playerCar"].getCarInfo()[3];
+
+				// following for loop checks x,y of each car, and if it collided
+				Object.keys(this.car_list).forEach(element => {
+					// for each key in the dictionary that is not player car, do:
+					if (element != "playerCar") {
+						console.log(this.car_list[element].getCarInfo());
+						var cx = this.car_list[element].getCarInfo()[0];
+						var cy = this.car_list[element].getCarInfo()[1];
+						var cw = this.car_list[element].getCarInfo()[2];
+						var ch = this.car_list[element].getCarInfo()[3];
+						// call didCollide fn
+
+						if (this.didCollide(px, py, pw, ph, cx, cy, cw, ch)) {
+							if (this.car_list[element].carType == "obstacleCar") {
+								var collisionAudio = new Audio("racing_sound/Crash.mp3");
+								collisionAudio.play();
+								this.decreaseLife();
+								// reset game
+								this.resetGame();
+							} else if (this.car_list[element].carType == "fuelCar") {
+								// refuel
+								var refuelAudio = new Audio("racing_sound/Refuel.mp3");
+								refuelAudio.play();
+								this.car_list["playerCar"].refuelCar();
+								this.car_list[element].removeCar();
+								delete this.car_list[element];
+							}
+						}
+					}
+				});
+			}
+
+			didCollide(x, y, w, h, bx, by, bw, bh) {
+				// return true if collided
+				return !(
+					((x + w) < bx) ||
+					((y + h) < (by)) ||
+					(y > (by + bh)) ||
+					(x > (bx + bw))
+				);
+
+			}
+
+			decreaseLife() {
+				// decrease life
+				this.lives -= 1;
+				this.displayLife();
+			}
+
+			displayLife() {
+				// remove all lives on screen, the refresu
+				document.querySelectorAll(".numOfLives").forEach((life) => { life.remove() });
+
+				// change display of lives as no. of lives decreases
+				// make corresponding number of hearts based on lives
+				var lives_list = [];
+				for (var ctr = 0; ctr < this.lives; ctr++) {
+					lives_list[ctr] = document.createElement("div");
+					document.body.appendChild(lives_list[ctr]);
+					lives_list[ctr].classList.add("numOfLives");
+					lives_list[ctr].style.left = (1245 + (75 * ctr)) + "px";
+					lives_list[ctr].style.top = 550 + "px";
+
+				}
+			}
+
+			calculateTotalDistanceTraveled() {
+				// units in meters & secods
+				// As normal time is too less, we use a scale factor
+				return Math.min(this.calculateDistanceTraveledAtPresentSpeed() + this.distanceTraveledAtPriorSpeeds, this.race_distance);
+			}
+
+			calculateDistanceTraveledAtPresentSpeed() {
+				if (this.speed != 0) {
+					this.distanceTraveledAtPresentSpeed = this.speed * ((new Date().getTime() - this.lastTimeWhenSpeedChanged) * this.scaleFactor) / 1000;
+				}
+
+				return this.distanceTraveledAtPresentSpeed;
+			}
+
+			fuelLeft() {
+				return Math.round(Math.max(this.car_list["playerCar"].vehicleFuelLeft(), 0));
+			}
+
+			returnValidCarCoordinates() {
+				/* Formulae to restrict between Max, Min
+				Math.floor(Math.random() * (max - min + 1)) + min;
+				*/
+				var carImageWidth = this.car_list["playerCar"].getCarInfo()[2]; // car width
+				var min = Math.ceil(screen.width / 3);
+				var max = Math.floor((2 / 3 * screen.width) - carImageWidth);
+				return Math.floor(Math.random() * (max - min + 1)) + min;
+			}
+
+			progressBar() {
+				// change display of progress bar
+				var boxCar = document.getElementById("boxCar");
+				var percentageFactor = (this.calculateTotalDistanceTraveled() / this.race_distance) * 100; // percentage of distance traveled
+				boxCar.style.top = 875 - ((percentageFactor / 100) * this.screenHeight) + "px";
+			}
+
+			changePerceivedMotion() {
+				/* return (
+				1. yPosIncrement which moves dotted line downwards faster when increased and slower when decreased,
+				2. frequencyDottedLineCreation, how quickly lines appear
+				) */
+				if (this.speed < 150 && this.speed > 0) {
+					return [50, 4];
+				} else if (this.speed < 200 && this.speed > 150) {
+					return [60, 3];
+				} else if (this.speed < 300 && this.speed > 200) {
+					return [75, 2];
+				} else if (this.speed <= 400 && this.speed > 300) {
+					return [90, 2];
+				} else {
+					return [0, 1];
+					// invalid range, do nothing
+				}
+			}
+
+
+			countdownTimer() {
+				var now = new Date().getTime();
+				var timeElapsed = now - this.gameStartTime;
+				this.timeLeft = Math.max(this.gameDuration - timeElapsed, 0);
+
+				return Math.round(this.timeLeft / 1000);
+			}
+
+			// creating keyboard handlers
+			myKeyboardHandler(ev) {
+				this.keyCtr += 1;
+				if (this.state == "not-pressing") {
+					this.state = "pressing";
+				} else if (this.state == "pressing" && this.ctr >= 10) {
+					this.state = "long-pressing";
+				} else {
+					// do nothing
+				}
+
+				if (ev.key == "ArrowLeft") {
+					this.car_list["playerCar"].move(-50, 0);
+					this.last_direction = "left";
+				} else if (ev.key == "ArrowRight") {
+					this.car_list["playerCar"].move(50, 0);
+					this.last_direction = "right";
+				} else if (ev.key == "ArrowUp") {
+					if (this.state == "pressing") {
+
+						// storing time at the current speed before speed changes
+						// in seconds
+						this.distanceTraveledAtPriorSpeeds += this.calculateDistanceTraveledAtPresentSpeed();
+						this.lastTimeWhenSpeedChanged = new Date().getTime();
+						this.speed = this.car_list["playerCar"].validSpeed(this.speed + 15);
+					} else {
+						this.incrementMultiplier += 0.1;
+						// storing time at the current speed before speed changes
+						// in seconds
+						// this.calculateDistanceTraveled();
+						this.lastTimeWhenSpeedChanged = new Date().getTime();
+
+						// incrementing speed
+						this.speed = this.car_list["playerCar"].validSpeed(this.speed * this.incrementMultiplier);
+					}
+				} else if (ev.key == "ArrowDown") {
+					if (this.state == "pressing") {
+						// this.calculateDistanceTraveled();
+						this.lastTimeWhenSpeedChanged = new Date().getTime();
+						this.speed = this.car_list["playerCar"].validSpeed(this.speed - 15);
+					} else {
+						// this.calculateDistanceTraveled();
+						this.lastTimeWhenSpeedChanged = new Date().getTime();
+						this.speed = this.car_list["playerCar"].validSpeed(this.speed / this.incrementMultiplier);
+					}
+				}
+			}
+
+			resetGame() {
+				this.speed = 0;
+				this.car_list["playerCar"].refuelCar();
+				var damagedCar = document.createElement("img");
+				damagedCar.classList.add("damagedCar");
+
+				// 1. remove obstacle cars from screen
+				document.querySelectorAll(".obstacleCar").forEach( (obstCar) => obstCar.remove());
+
+				// 2. remove obstacle cars from list
+				delete this.car_list["obstacleCar"];
+			}
+
+			checkIfGameShouldBeEnded() {
+				// check certain circumstances, and decide whether to
+				// ..end game or not
+
+				// check #1 - is fuel finished
+				if (this.fuelLeft() <= 0) {
+					alert("Sadly, you lost by fuel out. Want to try again?");
+					return true;
+				}
+
+				// check #2 - is progress car at finish line
+				if (this.calculateTotalDistanceTraveled() == this.race_distance) {
+					var victoryAudio = new Audio("racing_sound/Victory.mp3");
+					victoryAudio.play();
+					alert("Congratulations! You have won this game. Want to play again?");
+					return true;
+				}
+
+				// check #3 - is lives 0
+				if (this.lives == 0) {
+					alert("You used all three lives without finishing the race. Want to try again?");
+					return true;
+				}
+
+				// check #4 - is time over
+				if (this.timeLeft <= 0) {
+					alert("Sadly, the reace time is finished, but you didn't finish the race. Want to try again?");
+				}
+
+				return false;
+			}
+
+			racingCommander() {
+				// call functions
+				this.changePerceivedMotion();
+				this.fuelLeft();
+				this.calculateTotalDistanceTraveled();
+				this.controllerCounter += 1;
+				this.returnValidCarCoordinates();
+				this.controllerCounter += 1;
+				this.progressBar();
+				this.countdownTimer();
+				this.detectCollision();
+
+				// set the three divs
+				// 1. current speed
+				// 2. time left
+				// 3. fuel left
+				document.getElementById("speed").value = Math.round(this.speed) + " m/s";
+				document.getElementById("timeLeft").value = Math.round(this.timeLeft / 1000) + " seconds";
+				document.getElementById("fuelLeft").value = this.fuelLeft() + " liters";
+
+				// checking if speed is zero
+				if (this.speed != 0) {
+					// car is moving, do following steps..
+
+					// 1. display and move obstacle cars
+					if ("obstacleCar" in this.car_list) {
+						// obstacle car key exists
+						if (this.car_list["obstacleCar"].getCarInfo()[1] + this.car_list["obstacleCar"].getCarInfo()[2] >= this.screenHeight) {
+							// remove the car
+							this.car_list["obstacleCar"].removeCar();
+							delete this.car_list["obstacleCar"];
+						} else if (this.car_list["obstacleCar"].getCarInfo()[1] + this.car_list["obstacleCar"].getCarInfo()[2] < this.screenHeight && this.speed != 0) {
+							// assuming car is on the screen
+							document.querySelectorAll(".obstacleCar").forEach(() => { this.car_list["obstacleCar"].move(0, 100); });
+						}
+					} else {
+						this.car_list["obstacleCar"] = new Vehicle(130, 70, this.returnValidCarCoordinates(), 10, "obstacleCar", "racing_assets/ObstacleCar.png");
+					}
+
+					// 2. display and move fuel car
+					if (this.fuelLeft() <= 0.75 * this.car_list["playerCar"].fuelCapacity) {
+						if ("fuelCar" in this.car_list) {
+							if (this.car_list["fuelCar"].getCarInfo()[1] + 160 < this.screenHeight && this.speed != 0) {
+								document.querySelectorAll(".fuelCar").forEach(() => { this.car_list["fuelCar"].move(0, 100); });
+							} else if (this.car_list["fuelCar"].getCarInfo()[1] + this.car_list["fuelCar"].getCarInfo()[2] >= this.screenHeight) {
+								// car is off screen, should be removed
+								this.car_list["fuelCar"].removeCar();
+								delete this.car_list["fuelCar"];
+							}
+						} else {
+							this.car_list["fuelCar"] = new Vehicle(110, 70, this.returnValidCarCoordinates(), 10, "fuelCar", "racing_assets/FuelCar.png");
+						}
+					}
+				}
+
+				// end game
+				if (this.checkIfGameShouldBeEnded()) {
+					clearInterval(clock);
+					clearInterval(controller.clock);
+					return;
+				}
+			}
+		}
+
+		// start the game controller
+		var controller = new gameController();
+		controller.clock = setInterval(() => { controller.racingCommander() }, 1000);
+		window.addEventListener("keydown", (ev) => { controller.myKeyboardHandler(ev); });
+
+	</script>
+</body>
+</html>
